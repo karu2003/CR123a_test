@@ -5,6 +5,8 @@ import numpy as np
 from scipy.interpolate import interp1d
 from scipy.integrate import simps
 import matplotlib.patches as mpatches
+import csv
+from matplotlib.ticker import FuncFormatter
 
 
 def read_data_from_file(file_path):
@@ -30,8 +32,16 @@ def calculate_energy_from_interpolation(time, voltage, current):
     voltage_integral = simps(voltage, time_seconds)
     return current * voltage_integral  # Joules
 
+def calculate_energy(voltage_list, time_list, current_a):
+    energy_wh = 0.0
+    for i in range(len(voltage_list) - 1):
+        u = voltage_list[i]
+        delta_t = time_list[i+1] - time_list[i]
+        energy_wh += u * current_a * delta_t  # Вт·ч
+    return energy_wh
 
-def plot_all_data(files_data, indices, energies, discharge_currents):
+
+def plot_all_data(files_data, indices, energies, discharge_currents, org_data_dict):
     """
     Plots data from multiple files on the same graph and annotates the energy values.
 
@@ -43,9 +53,11 @@ def plot_all_data(files_data, indices, energies, discharge_currents):
     """
     plt.figure(figsize=(12, 6))
     ax = plt.gca()
+    log_ticks = []
 
     for file_name, data in files_data.items():
         time = [i * 0.25 / 3600 for i in range(len(data))]  # Time in hours
+        log_ticks.append(time[-1])
 
         # Interpolation
         interp_func = interp1d(time, data, kind="cubic", fill_value="extrapolate")
@@ -59,7 +71,7 @@ def plot_all_data(files_data, indices, energies, discharge_currents):
         )
 
         energy_wh = energies[file_name]
-        
+
         # Plotting the original data
         ax.plot(time, data, ".", label=f"{file_name} (Original Data)", alpha=0.7)
 
@@ -74,7 +86,7 @@ def plot_all_data(files_data, indices, energies, discharge_currents):
         text_offset = 0.01  # along X (hours)
         vertical_offset = 0.05  # along Y (volts)
 
-        label = f"{discharge_current}A load\n{energy_wh:.3f} Wh"
+        label = f"{discharge_current} A\n{energy_wh:.3f} Wh"
         ax.annotate(
             label,
             xy=(x_text, y_text),
@@ -87,6 +99,44 @@ def plot_all_data(files_data, indices, energies, discharge_currents):
             horizontalalignment="left",
             verticalalignment="bottom",
         )
+
+    for label, data in org_data_dict.items():
+        current_a = float(label.split()[0]) / 1000   
+        energy = calculate_energy(data["voltage"], data["time"], current_a)
+        label = f"{label}\n{energy:.3f} Wh"
+        (line,) = ax.plot(data["time"], data["voltage"], label=label)
+        log_ticks.append(data["time"][-1])        
+
+        # Annotate the graph with a separate legend
+        x_text = data["time"][-1]  # Last time point
+        y_text = data["voltage"][-1]  # Last voltage point
+
+        # Add annotation with an arrow pointing to the graph
+        ax.annotate(
+            label,
+            xy=(x_text, y_text),
+            xytext=(x_text + 0.5, y_text + 0.1),  # Offset for the text
+            textcoords="data",
+            arrowprops=dict(arrowstyle="->", color=line.get_color(), lw=1.5),
+            fontsize=10,
+            color=line.get_color(),
+            bbox=dict(boxstyle="round,pad=0.3", fc="white", ec=line.get_color(), lw=1),
+        )
+
+    ax.set_xscale("log")
+ 
+    # Set custom ticks for the X-axis
+    log_ticks.sort()
+    ax.set_xticks(log_ticks)
+    ax.get_xaxis().set_major_formatter(FuncFormatter(lambda x, _: f"{x:.2f}"))
+
+    # Set X-axis limits to match the data range
+    # min_time = min(min(data["time"]) for data in org_data_dict.values())
+    min_time = 0.04  # Ensure left limit is >= 1e-3
+    max_time = max(max(data["time"]) for data in org_data_dict.values())
+    ax.set_xlim(
+        left=max(min_time, 1e-3), right=max_time
+    )  # Ensure left limit is >= 1e-3
 
     plt.title("Battery CR123A Discharge Graph")
     plt.xlabel("Time (h)")
@@ -226,7 +276,9 @@ def calculate_discharge_energy_integral(data, discharge_current, time_step=0.25)
     return energy
 
 
-def calculate_energy_from_interpolation(interpolated_time, interpolated_data, discharge_current):
+def calculate_energy_from_interpolation(
+    interpolated_time, interpolated_data, discharge_current
+):
     """
     Calculates the discharge energy of the battery using interpolated data.
 
@@ -250,6 +302,44 @@ if __name__ == "__main__":
     txt_files = [f for f in os.listdir(current_directory) if f.endswith(".txt")]
     x_max = 3.3  # Value to find and mark on the graph
     x_min = 0.9  # Value to find and mark on the graph
+
+    # Path to the CSV file
+    filename = "CR123A.csv"
+
+    # Separate lists for each curve
+    t_300, v_300 = [], []
+    t_100, v_100 = [], []
+    t_500, v_500 = [], []
+
+    # Reading and filtering
+    with open(filename, newline="", encoding="utf-8") as csvfile:
+        reader = csv.reader(csvfile)
+        for row in reader:
+            try:
+                t = float(row[0].replace(",", "."))
+                v300 = float(row[1].replace(",", "."))
+                v100 = float(row[2].replace(",", "."))
+                v500 = float(row[3].replace(",", "."))
+
+                # Add to each graph independently if the value is valid
+                if v300 >= 0:
+                    t_300.append(t)
+                    v_300.append(v300)
+                if v100 >= 0:
+                    t_100.append(t)
+                    v_100.append(v100)
+                if v500 >= 0:
+                    t_500.append(t)
+                    v_500.append(v500)
+
+            except (ValueError, IndexError):
+                continue
+
+    org_data_dict = {
+        "300 mA": {"time": t_300, "voltage": v_300},
+        "100 mA": {"time": t_100, "voltage": v_100},
+        "500 mA": {"time": t_500, "voltage": v_500},
+    }
 
     if not txt_files:
         print("No .txt files found in the current directory.")
@@ -302,4 +392,6 @@ if __name__ == "__main__":
                 print(f"Error: File {file_name} contains invalid data.")
 
         if files_data:
-            plot_all_data(files_data, indices, energies, discharge_currents)
+            plot_all_data(
+                files_data, indices, energies, discharge_currents, org_data_dict
+            )
