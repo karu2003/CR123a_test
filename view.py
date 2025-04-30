@@ -55,6 +55,10 @@ def plot_all_data(files_data, indices, energies, discharge_currents, org_data_di
     ax = plt.gca()
     log_ticks = []
 
+    # List to store occupied annotation coordinates (x, y)
+    annotated_points = []
+
+    # Обработка данных из txt файлов
     for file_name, data in files_data.items():
         time = [i * 0.25 / 3600 for i in range(len(data))]  # Time in hours
         log_ticks.append(time[-1])
@@ -72,25 +76,49 @@ def plot_all_data(files_data, indices, energies, discharge_currents, org_data_di
 
         energy_wh = energies[file_name]
 
-        # Plotting the original data
+        # Plotting the original data and graph
         ax.plot(time, data, ".", label=f"{file_name} (Original Data)", alpha=0.7)
-
-        # Plotting the graph
         (line,) = ax.plot(interpolated_time, interpolated_data, "-", label=file_name)
 
-        # Coordinates of the right end of the line (for annotation)
+        # Координаты конца линии для аннотации
         x_text = interpolated_time[-1]
         y_text = interpolated_data[-1]
 
-        # Shift the text slightly to the right and up
-        text_offset = 0.01  # along X (hours)
-        vertical_offset = 0.05  # along Y (volts)
+        # Улучшенное размещение аннотаций
+        vertical_offset = 20.08  # Увеличено
+        horizontal_offset = 0.03  # Увеличено
+        min_dist = 0.05  # Увеличено
+        orig_y = y_text
+        orig_x = x_text
+        max_attempts = 100  # Увеличено
 
+        attempts = 0
+        direction = 1
+        while any(
+            abs(y_text - y) < min_dist and abs(x_text - x) < 0.1  # Увеличено
+            for x, y in annotated_points
+        ) and attempts < max_attempts:
+            # Чередуем вверх/вниз и вправо/влево
+            if attempts % 2 == 0:
+                y_text += direction * vertical_offset
+            else:
+                x_text += direction * horizontal_offset
+
+            direction *= -1
+            # Увеличиваем смещения при большом количестве попыток
+            if attempts % 10 == 0 and attempts > 0:
+                vertical_offset *= 1.5
+                horizontal_offset *= 1.5
+
+            attempts += 1
+
+        annotated_points.append((x_text, y_text))
+        
         label = f"{discharge_current} A\n{energy_wh:.3f} Wh"
         ax.annotate(
             label,
-            xy=(x_text, y_text),
-            xytext=(x_text + text_offset, y_text + vertical_offset),
+            xy=(orig_x, orig_y),
+            xytext=(x_text, y_text),
             textcoords="data",
             arrowprops=dict(arrowstyle="->", color=line.get_color(), lw=1.5),
             fontsize=9,
@@ -100,27 +128,60 @@ def plot_all_data(files_data, indices, energies, discharge_currents, org_data_di
             verticalalignment="bottom",
         )
 
+    # Обработка данных из org_data_dict - ИСПОЛЬЗУЕМ ТОТ ЖЕ АЛГОРИТМ для избежания наложений
     for label, data in org_data_dict.items():
         current_a = float(label.split()[0]) / 1000   
         energy = calculate_energy(data["voltage"], data["time"], current_a)
-        label = f"{label}\n{energy:.3f} Wh"
+        text_label = f"{label}\n{energy:.3f} Wh"
         (line,) = ax.plot(data["time"], data["voltage"], label=label)
-        log_ticks.append(data["time"][-1])        
+        log_ticks.append(data["time"][-1])
 
-        # Annotate the graph with a separate legend
-        x_text = data["time"][-1]  # Last time point
-        y_text = data["voltage"][-1]  # Last voltage point
+        # Координаты для аннотации
+        x_text = data["time"][-1]
+        y_text = data["voltage"][-1]
+        orig_x = x_text
+        orig_y = y_text
 
-        # Add annotation with an arrow pointing to the graph
+        # Используем тот же алгоритм предотвращения наложений
+        vertical_offset = 0.08
+        horizontal_offset = 0.03
+        min_dist = 0.05
+        max_attempts = 100
+        attempts = 0
+        direction = 1
+
+        while any(
+            abs(y_text - y) < min_dist and abs(x_text - x) < 0.1
+            for x, y in annotated_points
+        ) and attempts < max_attempts:
+            # Чередуем вверх/вниз и вправо/влево
+            if attempts % 2 == 0:
+                y_text += direction * vertical_offset
+            else:
+                x_text += direction * horizontal_offset
+
+            direction *= -1
+            # Увеличиваем смещения при большом количестве попыток
+            if attempts % 10 == 0 and attempts > 0:
+                vertical_offset *= 1.5
+                horizontal_offset *= 1.5
+
+            attempts += 1
+
+        annotated_points.append((x_text, y_text))
+
+        # Добавляем аннотацию 
         ax.annotate(
-            label,
-            xy=(x_text, y_text),
-            xytext=(x_text + 0.5, y_text + 0.1),  # Offset for the text
+            text_label,
+            xy=(orig_x, orig_y),
+            xytext=(x_text, y_text),
             textcoords="data",
             arrowprops=dict(arrowstyle="->", color=line.get_color(), lw=1.5),
             fontsize=10,
             color=line.get_color(),
             bbox=dict(boxstyle="round,pad=0.3", fc="white", ec=line.get_color(), lw=1),
+            horizontalalignment="left",
+            verticalalignment="bottom",
         )
 
     ax.set_xscale("log")
