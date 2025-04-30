@@ -65,7 +65,7 @@ def plot_all_data(files_data, indices, energies, discharge_currents, org_data_di
         interpolated_data = interp_func(interpolated_time)
 
         # Energy
-        discharge_current = discharge_currents[file_name]
+        discharge_current = extract_current_from_filename(file_name)
         energy_wh_interpolated = calculate_energy_from_interpolation(
             interpolated_time, interpolated_data, discharge_current
         )
@@ -297,6 +297,34 @@ def calculate_energy_from_interpolation(
     return energy
 
 
+def extract_current_from_filename(file_name):
+    """
+    Extracts current value from filename.
+    Examples:
+    - 1A.txt returns 1.0
+    - 1_5A.txt returns 1.5
+    - 0_5A.txt returns 0.5
+    
+    Parameters:
+        file_name (str): Name of the file
+        
+    Returns:
+        float: Current value in amperes
+    """
+    # Remove file extension
+    name_without_ext = file_name.split('.')[0]
+    # Remove 'A' suffix
+    name_without_a = name_without_ext.replace('A', '')
+    # Replace underscore with decimal point
+    current_str = name_without_a.replace('_', '.')
+    # Convert to float
+    try:
+        return float(current_str)
+    except ValueError:
+        print(f"Could not extract current from filename: {file_name}")
+        return 0.0
+
+
 if __name__ == "__main__":
     current_directory = os.getcwd()  # Current directory
     txt_files = [f for f in os.listdir(current_directory) if f.endswith(".txt")]
@@ -353,7 +381,7 @@ if __name__ == "__main__":
             try:
                 print(f"Reading data from file: {file_name}")
                 data = read_data_from_file(file_name)
-                discharge_current = file_name[0]
+                discharge_current = extract_current_from_filename(file_name)
                 discharge_currents[file_name] = discharge_current
                 print(f"Discharge current: {discharge_current}")
 
