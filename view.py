@@ -41,6 +41,158 @@ def calculate_energy(voltage_list, time_list, current_a):
     return energy_wh
 
 
+def estimate_annotation_size(text, fontsize=9):
+    """
+    Estimates the approximate size of an annotation based on the length of the text and font size.
+    
+    Parameters:
+        text: Annotation text
+        fontsize: Font size
+        
+    Returns:
+        tuple: (width, height) approximate dimensions
+    """
+    lines = text.split('\n')
+    max_line_length = max(len(line) for line in lines)
+    
+    # Improved coefficients for better size estimation
+    width_per_char = 0.015 * (fontsize / 9)  # Increased width per character
+    height_per_line = 0.06 * (fontsize / 9)  # Increased height per line
+    
+    # Add padding
+    width = max_line_length * width_per_char + 0.05
+    height = len(lines) * height_per_line + 0.02
+    
+    return width, height
+
+def rectangles_overlap(rect1, rect2, margin=0.08):
+    """
+    Checks if two rectangles overlap.
+    
+    Parameters:
+        rect1: (x, y, width, height) of the first rectangle
+        rect2: (x, y, width, height) of the second rectangle
+        margin: additional margin
+        
+    Returns:
+        bool: True if the rectangles overlap
+    """
+    x1, y1, w1, h1 = rect1
+    x2, y2, w2, h2 = rect2
+    
+    # Add margin to dimensions
+    w1 += margin
+    h1 += margin
+    w2 += margin
+    h2 += margin
+    
+    # Check for overlap
+    return not (x1 + w1 < x2 or x2 + w2 < x1 or y1 + h1 < y2 or y2 + h2 < y1)
+
+def find_free_position(text, orig_xy, annotated_rects, fontsize=9):
+    """
+    Finds a free position for an annotation.
+    
+    Parameters:
+        text: Annotation text
+        orig_xy: Original coordinates (x, y)
+        annotated_rects: List of rectangles of existing annotations
+        fontsize: Font size
+        
+    Returns:
+        tuple: ((x, y), rect) coordinates for placing the annotation and its rectangle
+    """
+    x_text, y_text = orig_xy
+    orig_x, orig_y = orig_xy
+    
+    # Parameters for search - prioritize upward movement
+    vertical_offset = 0.12  # Increased vertical offset
+    horizontal_offset = 0.04  # Increased horizontal offset
+    max_attempts = 200  # More attempts
+    
+    attempts = 0
+    direction = 1
+    
+    # Estimate annotation size
+    width, height = estimate_annotation_size(text, fontsize)
+    current_rect = (x_text, y_text, width, height)
+    
+    # Store the best position found with minimum overlaps
+    best_position = (x_text, y_text)
+    best_rect = current_rect
+    min_overlaps = float('inf')
+    
+    # Check for overlap with existing annotations
+    while any(rectangles_overlap(current_rect, rect) for rect in annotated_rects) and attempts < max_attempts:
+        # First try moving up to avoid overlaps
+        if attempts < 30:
+            # Prioritize upward movement for first attempts
+            y_text += vertical_offset
+        else:
+            # After initial attempts, use a more varied approach
+            if attempts % 3 == 0:
+                # Move up
+                y_text += vertical_offset
+            elif attempts % 3 == 1:
+                # Move horizontally
+                x_text += direction * horizontal_offset
+                direction *= -1
+            else:
+                # Try diagonal movement
+                y_text += vertical_offset * 0.7
+                x_text += direction * horizontal_offset * 0.7
+        
+        # Increase offsets after many attempts
+        if attempts % 10 == 0 and attempts > 0:
+            vertical_offset *= 1.2
+            horizontal_offset *= 1.2
+        
+        attempts += 1
+        
+        # Update rectangle
+        current_rect = (x_text, y_text, width, height)
+        
+        # Count overlaps for this position
+        overlap_count = sum(1 for rect in annotated_rects if rectangles_overlap(current_rect, rect))
+        
+        # Keep track of position with minimum overlaps
+        if overlap_count < min_overlaps:
+            min_overlaps = overlap_count
+            best_position = (x_text, y_text)
+            best_rect = current_rect
+        
+        # If no overlaps, we found a good position
+        if overlap_count == 0:
+            break
+    
+    # If we couldn't find a perfect position, use the best one
+    if attempts >= max_attempts:
+        return best_position, best_rect
+    
+    return (x_text, y_text), current_rect
+
+def find_nearest_point(x_array, y_array, x_target, y_target):
+    """
+    Finds the nearest point on the graph to the specified target coordinates.
+    
+    Parameters:
+        x_array: Array of x coordinates
+        y_array: Array of y coordinates
+        x_target: Target x coordinate
+        y_target: Target y coordinate
+        
+    Returns:
+        tuple: (x, y) of the nearest point on the graph
+    """
+    # Calculate distance to each point
+    distances = np.sqrt((np.array(x_array) - x_target)**2 + (np.array(y_array) - y_target)**2)
+    
+    # Find index of the minimum distance
+    idx = np.argmin(distances)
+    
+    # Return the nearest point
+    return x_array[idx], y_array[idx]
+
 def plot_all_data(files_data, indices, energies, discharge_currents, org_data_dict):
     """
     Plots data from multiple files on the same graph and annotates the energy values.
@@ -55,10 +207,10 @@ def plot_all_data(files_data, indices, energies, discharge_currents, org_data_di
     ax = plt.gca()
     log_ticks = []
 
-    # List to store occupied annotation coordinates (x, y)
-    annotated_points = []
+    # List to store annotation rectangles
+    annotated_rects = []
 
-    # Обработка данных из txt файлов
+    # Process data from txt files
     for file_name, data in files_data.items():
         time = [i * 0.25 / 3600 for i in range(len(data))]  # Time in hours
         log_ticks.append(time[-1])
@@ -80,44 +232,29 @@ def plot_all_data(files_data, indices, energies, discharge_currents, org_data_di
         ax.plot(time, data, ".", label=f"{file_name} (Original Data)", alpha=0.7)
         (line,) = ax.plot(interpolated_time, interpolated_data, "-", label=file_name)
 
-        # Координаты конца линии для аннотации
+        # Initial annotation position at the end of the line
         x_text = interpolated_time[-1]
         y_text = interpolated_data[-1]
-
-        # Улучшенное размещение аннотаций
-        vertical_offset = 20.08  # Увеличено
-        horizontal_offset = 0.03  # Увеличено
-        min_dist = 0.05  # Увеличено
-        orig_y = y_text
-        orig_x = x_text
-        max_attempts = 100  # Увеличено
-
-        attempts = 0
-        direction = 1
-        while any(
-            abs(y_text - y) < min_dist and abs(x_text - x) < 0.1  # Увеличено
-            for x, y in annotated_points
-        ) and attempts < max_attempts:
-            # Чередуем вверх/вниз и вправо/влево
-            if attempts % 2 == 0:
-                y_text += direction * vertical_offset
-            else:
-                x_text += direction * horizontal_offset
-
-            direction *= -1
-            # Увеличиваем смещения при большом количестве попыток
-            if attempts % 10 == 0 and attempts > 0:
-                vertical_offset *= 1.5
-                horizontal_offset *= 1.5
-
-            attempts += 1
-
-        annotated_points.append((x_text, y_text))
         
+        # Prepare annotation text
         label = f"{discharge_current} A\n{energy_wh:.3f} Wh"
+        
+        # Find free position for annotation
+        (x_text, y_text), rect = find_free_position(
+            label, (x_text, y_text), annotated_rects, fontsize=9
+        )
+        
+        # Find nearest point on the graph to the annotation position
+        nearest_x, nearest_y = find_nearest_point(
+            interpolated_time, interpolated_data, x_text, y_text
+        )
+        
+        # Add rectangle to list
+        annotated_rects.append(rect)
+        
         ax.annotate(
             label,
-            xy=(orig_x, orig_y),
+            xy=(nearest_x, nearest_y),  # Point the arrow to the nearest point
             xytext=(x_text, y_text),
             textcoords="data",
             arrowprops=dict(arrowstyle="->", color=line.get_color(), lw=1.5),
@@ -128,7 +265,7 @@ def plot_all_data(files_data, indices, energies, discharge_currents, org_data_di
             verticalalignment="bottom",
         )
 
-    # Обработка данных из org_data_dict - ИСПОЛЬЗУЕМ ТОТ ЖЕ АЛГОРИТМ для избежания наложений
+    # Process data from org_data_dict - use the same algorithm
     for label, data in org_data_dict.items():
         current_a = float(label.split()[0]) / 1000   
         energy = calculate_energy(data["voltage"], data["time"], current_a)
@@ -136,44 +273,27 @@ def plot_all_data(files_data, indices, energies, discharge_currents, org_data_di
         (line,) = ax.plot(data["time"], data["voltage"], label=label)
         log_ticks.append(data["time"][-1])
 
-        # Координаты для аннотации
+        # Initial annotation position at the end of the line
         x_text = data["time"][-1]
         y_text = data["voltage"][-1]
-        orig_x = x_text
-        orig_y = y_text
 
-        # Используем тот же алгоритм предотвращения наложений
-        vertical_offset = 0.08
-        horizontal_offset = 0.03
-        min_dist = 0.05
-        max_attempts = 100
-        attempts = 0
-        direction = 1
+        # Find free position for annotation
+        (x_text, y_text), rect = find_free_position(
+            text_label, (x_text, y_text), annotated_rects, fontsize=10
+        )
+        
+        # Find nearest point on the graph to the annotation position
+        nearest_x, nearest_y = find_nearest_point(
+            data["time"], data["voltage"], x_text, y_text
+        )
+        
+        # Add rectangle to list
+        annotated_rects.append(rect)
 
-        while any(
-            abs(y_text - y) < min_dist and abs(x_text - x) < 0.1
-            for x, y in annotated_points
-        ) and attempts < max_attempts:
-            # Чередуем вверх/вниз и вправо/влево
-            if attempts % 2 == 0:
-                y_text += direction * vertical_offset
-            else:
-                x_text += direction * horizontal_offset
-
-            direction *= -1
-            # Увеличиваем смещения при большом количестве попыток
-            if attempts % 10 == 0 and attempts > 0:
-                vertical_offset *= 1.5
-                horizontal_offset *= 1.5
-
-            attempts += 1
-
-        annotated_points.append((x_text, y_text))
-
-        # Добавляем аннотацию 
+        # Add annotation 
         ax.annotate(
             text_label,
-            xy=(orig_x, orig_y),
+            xy=(nearest_x, nearest_y),  # Point the arrow to the nearest point
             xytext=(x_text, y_text),
             textcoords="data",
             arrowprops=dict(arrowstyle="->", color=line.get_color(), lw=1.5),

@@ -13,7 +13,9 @@
     "python.analysis.extraPaths": [
         "",
         "/home/andrew/.vscode/extensions/joedevivo.vscode-circuitpython-0.2.0-linux-x64/stubs",
-        "/home/andrew/.config/Code/User/globalStorage/joedevivo.vscode-circuitpython/bundle/20250415/adafruit-circuitpython-bundle-py-20250415/lib"
+        "/home/andrew/.config/Code/User/globalStorage/joedevivo.vscode-circuitpython/bundle/20250429/adafruit-circuitpython-bundle-py-20250429/lib"
     ],
-    "circuitpython.board.version": null
+    "circuitpython.board.version": null,
+    "github.copilot.enable": true,
+    "github.copilot.editor.enable": true
 }
