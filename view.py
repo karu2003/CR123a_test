@@ -193,6 +193,92 @@ def find_nearest_point(x_array, y_array, x_target, y_target):
     # Return the nearest point
     return x_array[idx], y_array[idx]
 
+def estimate_tick_label_width(value, fontsize=10):
+    """
+    Estimates the width of a tick label based on the value and font size.
+    
+    Parameters:
+        value: The value to be displayed as a tick
+        fontsize: Font size of the tick label
+        
+    Returns:
+        float: Estimated width in data units
+    """
+    # Convert the value to a string with 2 decimal places
+    text = f"{value:.2f}"
+    
+    # Estimate width based on text length and font size
+    # These coefficients need to be adjusted based on the actual display
+    width_per_char = 0.01 * (fontsize / 10)
+    
+    # Get text length and calculate width
+    text_len = len(text)
+    width = text_len * width_per_char
+    
+    # Return estimated width plus some padding
+    return width + 0.01
+
+def filter_overlapping_ticks(ticks, min_distance_factor=1.5, fontsize=10):
+    """
+    Filters out ticks that would result in overlapping labels.
+    Uses a more aggressive approach to reduce the number of ticks.
+    
+    Parameters:
+        ticks: List of tick positions
+        min_distance_factor: Factor to multiply the estimated label width by
+        fontsize: Font size of tick labels
+        
+    Returns:
+        list: Filtered list of ticks
+    """
+    if not ticks:
+        return []
+    
+    # Sort ticks
+    ticks = sorted(ticks)
+    
+    # For logarithmic scale, we need to consider relative distances
+    # Extract the min and max values to normalize distances
+    min_val = min(ticks)
+    max_val = max(ticks)
+    range_val = max_val - min_val
+    
+    # Initialize filtered list with the first tick
+    filtered_ticks = [ticks[0]]
+    
+    # Keep track of the "reserved space" for each tick
+    # For logarithmic scale, we use relative positions
+    label_width = estimate_tick_label_width(ticks[0], fontsize)
+    reserved_spaces = [(ticks[0] - label_width/2, ticks[0] + label_width/2)]
+    
+    # Process remaining ticks
+    for tick in ticks[1:]:
+        # Calculate the label width for this tick
+        label_width = estimate_tick_label_width(tick, fontsize)
+        
+        # Calculate the space this tick would occupy
+        tick_space = (tick - label_width/2, tick + label_width/2)
+        
+        # Adjust the minimum distance based on how close we are to other ticks
+        # More aggressive filtering when ticks are close together
+        adjusted_min_distance = min_distance_factor * (1.0 + 0.5 * (tick_space[1] - tick_space[0]) / range_val)
+        
+        # Check if this space overlaps with any reserved space
+        overlaps = False
+        for space in reserved_spaces:
+            # More strict overlap check
+            if not ((space[1] * adjusted_min_distance < tick_space[0]) or 
+                    (space[0] > tick_space[1] * adjusted_min_distance)):
+                overlaps = True
+                break
+        
+        # If no overlap, add this tick and its space
+        if not overlaps:
+            filtered_ticks.append(tick)
+            reserved_spaces.append(tick_space)
+    
+    return filtered_ticks
+
 def plot_all_data(files_data, indices, energies, discharge_currents, org_data_dict):
     """
     Plots data from multiple files on the same graph and annotates the energy values.
@@ -308,6 +394,8 @@ def plot_all_data(files_data, indices, energies, discharge_currents, org_data_di
  
     # Set custom ticks for the X-axis
     log_ticks.sort()
+    # More aggressive filtering of overlapping ticks
+    log_ticks = filter_overlapping_ticks(log_ticks, min_distance_factor=1.1)
     ax.set_xticks(log_ticks)
     ax.get_xaxis().set_major_formatter(FuncFormatter(lambda x, _: f"{x:.2f}"))
 
